@@ -7,3 +7,5 @@ chroma_db
 test_performance_assistant.py
 test_vanna_NL2SQL.py
 reports
+test_performance_assistant_web.py
+test_assistant_core.py

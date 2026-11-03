@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>员工业绩数据分析助手</title>
+<style>
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  font-family: "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: #fff;
+  color: #1f2329;
+}
+.app { display: flex; height: 100vh; overflow: hidden; }
+
+/* ---------------------------------------------------------------- 侧边栏 */
+.sidebar {
+  flex: 0 0 260px;
+  width: 260px;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 12px 10px;
+  background: #f7f8fa;
+  border-right: 1px solid #eef0f2;
+}
+.sidebar-top { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 14px; }
+.brand { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; color: #1f2329; }
+.icon-btn {
+  width: 30px; height: 30px;
+  border: none; background: transparent; border-radius: 8px;
+  color: #8a9099; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.icon-btn:hover { background: #eceef1; color: #1f2329; }
+.new-chat {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  width: 100%; height: 40px; margin-bottom: 14px;
+  border: 1px solid #e3e5e8; border-radius: 999px;
+  background: #fff; color: #1f2329;
+  font-size: 14px; font-family: inherit; cursor: pointer;
+}
+.new-chat:hover { border-color: #c8d3ff; color: #4d6bfe; }
+.sessions { flex: 1; overflow-y: auto; margin: 0 -4px; padding: 0 4px; }
+.group-label { padding: 12px 8px 6px; font-size: 12px; color: #9aa0aa; }
+.session-item {
+  display: block; width: 100%; margin-bottom: 2px; padding: 9px 10px;
+  text-align: left; border: none; border-radius: 8px;
+  background: transparent; color: #4b5563;
+  font-size: 13px; font-family: inherit; cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.session-item:hover { background: #eceef1; }
+.session-item.active { background: #e8ecff; color: #2043d5; }
+.sidebar-footer {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 8px 2px; border-top: 1px solid #eceef1;
+  font-size: 13px; color: #4b5563;
+}
+.app:not(.sidebar-open) .sidebar { display: none; }
+#sidebar-toggle {
+  position: absolute; top: 14px; left: 14px; z-index: 10;
+  display: none; width: 34px; height: 34px;
+  border: 1px solid #e3e5e8; border-radius: 9px;
+  background: #fff; color: #4b5563; cursor: pointer;
+  align-items: center; justify-content: center;
+}
+.app:not(.sidebar-open) #sidebar-toggle { display: inline-flex; }
+
+/* ---------------------------------------------------------------- 主对话区 */
+.main { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.chat {
+  flex: 1; min-height: 0;
+  width: 100%; max-width: 780px; margin: 0 auto;
+  padding: 0 24px;
+  display: flex; flex-direction: column;
+}
+.app:not(.sidebar-open) .chat { padding-top: 44px; }
+.empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding-bottom: 48px; }
+.greeting { display: flex; align-items: center; gap: 12px; font-size: 22px; font-weight: 600; color: #1f2329; }
+.messages { flex: 1; overflow-y: auto; padding: 24px 0 8px; }
+.msg { display: flex; gap: 12px; margin-bottom: 22px; }
+.msg.user { justify-content: flex-end; }
+.avatar {
+  flex: 0 0 auto; width: 28px; height: 28px; margin-top: 2px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; background: #eef1ff; color: #4d6bfe; font-size: 12px;
+}
+.bubble { min-width: 0; font-size: 15px; line-height: 1.75; }
+.msg.user .bubble { max-width: 80%; padding: 10px 14px; border-radius: 14px; background: #eef3ff; white-space: pre-wrap; word-break: break-word; }
+.msg.assistant .bubble { flex: 1; padding-top: 2px; }
+
+.plan { margin-bottom: 10px; padding: 8px 12px; border: 1px solid #e3e8ff; border-radius: 10px; background: #f4f6ff; font-size: 13px; color: #4d6bfe; }
+.plan .notice { display: block; margin-top: 4px; color: #b26a00; }
+.progress { margin-bottom: 10px; font-size: 13px; color: #8a9099; }
+.progress-line { padding: 2px 0; }
+.progress-line::before { content: "·"; margin-right: 6px; }
+.goal-box { margin-bottom: 12px; padding: 14px; border: 1px solid #e5e6eb; border-radius: 12px; background: #fafbfc; }
+.goal-title { margin-bottom: 10px; font-size: 13px; color: #1f2329; }
+.goal-options { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.goal-btn {
+  padding: 9px 12px; text-align: left;
+  border: 1px solid #dde0e5; border-radius: 8px;
+  background: #fff; color: #1f2329;
+  font-size: 13px; font-family: inherit; cursor: pointer;
+}
+.goal-btn:hover { border-color: #4d6bfe; color: #4d6bfe; }
+.goal-btn.primary { border-color: #4d6bfe; background: #4d6bfe; color: #fff; }
+.goal-custom { display: flex; gap: 8px; }
+.goal-custom input { flex: 1; padding: 8px 10px; border: 1px solid #dde0e5; border-radius: 8px; font-size: 13px; font-family: inherit; }
+.goal-done { font-size: 13px; color: #0a9e5c; }
+
+.answer { white-space: pre-wrap; word-break: break-word; }
+.report { display: grid; gap: 10px; }
+.report-card { padding: 12px 14px; border: 1px solid #e5e6eb; border-radius: 10px; background: #fafbfc; }
+.report-card-title { margin-bottom: 6px; font-size: 13px; font-weight: 600; color: #1f2329; }
+.report-card-body { font-size: 13px; color: #3a3f47; white-space: pre-wrap; word-break: break-word; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.tag { padding: 2px 8px; border: 1px solid #e3e8ff; border-radius: 6px; background: #f4f6ff; font-size: 12px; color: #4d6bfe; }
+.tag.warn { border-color: #ffe3b8; background: #fff8e8; color: #b26a00; }
+.link { display: inline-block; margin-top: 10px; font-size: 13px; color: #4d6bfe; }
+details { margin-top: 12px; border-top: 1px solid #f0f1f3; padding-top: 10px; }
+summary { font-size: 13px; color: #646a73; cursor: pointer; }
+pre { padding: 10px; border: 1px solid #e5e6eb; border-radius: 8px; background: #f7f8fa; font-size: 12px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
+.table-wrap { margin-top: 12px; overflow-x: auto; }
+table { border-collapse: collapse; font-size: 13px; }
+th, td { padding: 6px 10px; border: 1px solid #e5e6eb; text-align: right; white-space: nowrap; }
+th { background: #f7f8fa; font-weight: 600; }
+td:first-child, th:first-child { text-align: left; }
+.chart { width: 100%; height: 400px; margin-top: 14px; }
+.error { font-size: 13px; color: #cb2634; white-space: pre-wrap; }
+
+/* ---------------------------------------------------------------- 输入框 */
+.composer-dock { padding: 12px 0 20px; }
+.composer {
+  padding: 12px 12px 10px 16px;
+  border: 1px solid #e3e5e8; border-radius: 18px;
+  background: #fff; box-shadow: 0 8px 28px rgba(31, 35, 41, .07);
+}
+.composer:focus-within { border-color: #c8d3ff; box-shadow: 0 8px 28px rgba(77, 107, 254, .12); }
+#query {
+  width: 100%; min-height: 26px; max-height: 180px;
+  padding: 4px 0; resize: none; border: none; outline: none;
+  background: transparent; color: #1f2329;
+  font-size: 15px; line-height: 1.6; font-family: inherit;
+}
+#query::placeholder { color: #a8adb6; }
+.composer-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 11px; border: 1px solid #dde4ff; border-radius: 999px;
+  background: #f4f6ff; color: #4d6bfe;
+  font-size: 13px; font-family: inherit; cursor: pointer;
+}
+.chip:hover { background: #eaefff; }
+#send {
+  flex: 0 0 auto; width: 36px; height: 36px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: 50%;
+  background: #e8ecff; color: #4d6bfe; cursor: pointer;
+}
+#send:hover:not(:disabled) { background: #dfe5ff; }
+#send:disabled { background: #f2f3f7; color: #b6bbc4; cursor: not-allowed; }
+
+@media (max-width: 900px) {
+  .sidebar {
+    position: fixed; inset: 0 auto 0 0; z-index: 30;
+    box-shadow: 8px 0 28px rgba(0, 0, 0, .08);
+    transition: transform .2s ease;
+  }
+  .app:not(.sidebar-open) .sidebar { display: flex; transform: translateX(-100%); }
+  .app.sidebar-open .sidebar { transform: translateX(0); }
+  #sidebar-toggle { display: inline-flex; }
+  .app.sidebar-open #sidebar-toggle { display: none; }
+  .chat { padding: 0 16px; }
+  .app:not(.sidebar-open) .chat { padding-top: 44px; }
+  .greeting { font-size: 19px; }
+}
+</style>
+</head>
+<body>
+<div class="app sidebar-open" id="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-top">
+      <div class="brand">
+        <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="7" fill="#4d6bfe"/><path d="M7 15.5V11M12 15.5V8M17 15.5v-2.5" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>
+        <span>业绩分析助手</span>
+      </div>
+      <button class="icon-btn" id="collapse-sidebar" type="button" aria-label="收起侧边栏">
+        <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M9 4v16" stroke="currentColor" stroke-width="1.8"/></svg>
+      </button>
+    </div>
+    <button class="new-chat" id="new-chat" type="button">
+      <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      开启新对话
+    </button>
+    <nav class="sessions" id="sessions"></nav>
+    <div class="sidebar-footer">
+      <div class="avatar">数</div>
+      <span>数据分析师</span>
+    </div>
+  </aside>
+
+  <main class="main">
+    <button class="icon-btn" id="sidebar-toggle" type="button" aria-label="展开侧边栏">
+      <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    </button>
+    <div class="chat" id="chat">
+      <div class="empty" id="empty">
+        <div class="greeting">
+          <svg width="30" height="30" viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="7" fill="#4d6bfe"/><path d="M7 15.5V11M12 15.5V8M17 15.5v-2.5" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>
+          你好，有什么我能帮你的吗？
+        </div>
+      </div>
+      <div class="messages" id="messages"></div>
+      <div class="composer-dock">
+        <form class="composer" id="ask-form">
+          <textarea id="query" rows="1" placeholder="给 业绩分析助手 发送消息"></textarea>
+          <div class="composer-bar">
+            <div class="chips">
+              <button class="chip" type="button" data-prompt="各员工回收金额排名前 5">
+                <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+                取数
+              </button>
+              <button class="chip" type="button" data-prompt="分析各员工回收金额差异的原因">
+                <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18l5-6 4 3 7-9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                分析
+              </button>
+              <button class="chip" type="button" data-prompt="画各员工回收金额前 10 的柱状图">
+                <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 19V9M12 19V5M18 19v-7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+                图表
+              </button>
+            </div>
+            <button id="send" type="submit" aria-label="发送">
+              <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </main>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script>
+const appEl = document.getElementById("app");
+const chatEl = document.getElementById("messages");
+const emptyEl = document.getElementById("empty");
+const sessionsEl = document.getElementById("sessions");
+const form = document.getElementById("ask-form");
+const input = document.getElementById("query");
+const sendBtn = document.getElementById("send");
+const chartInstances = [];
+
+let sessionsCache = [];
+let sessionId = localStorage.getItem("session_id") || "";
+let busy = false;
+
+function el(tag, cls, text) {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text !== undefined && text !== null) node.textContent = text;
+  return node;
+}
+
+function scrollBottom() {
+  chatEl.scrollTop = chatEl.scrollHeight;
+}
+
+/* 有消息时收起问候语，没有消息时展示居中问候 */
+function updateEmpty() {
+  const hasMessages = chatEl.childElementCount > 0;
+  chatEl.style.display = hasMessages ? "block" : "none";
+  emptyEl.style.display = hasMessages ? "none" : "flex";
+}
+
+function autoGrow() {
+  input.style.height = "auto";
+  input.style.height = Math.min(input.scrollHeight, 180) + "px";
+}
+
+function setBusy(value) {
+  busy = value;
+  sendBtn.disabled = value;
+}
+
+function addUserMessage(text) {
+  const wrap = el("div", "msg user");
+  wrap.appendChild(el("div", "bubble", text));
+  chatEl.appendChild(wrap);
+  updateEmpty();
+  scrollBottom();
+}
+
+function addAssistantMessage() {
+  const wrap = el("div", "msg assistant");
+  wrap.appendChild(el("div", "avatar", "数"));
+  const bubble = el("div", "bubble");
+  const planEl = el("div", "plan");
+  const progressEl = el("div", "progress");
+  const goalEl = el("div", "goal-box");
+  const resultEl = el("div", "result");
+  planEl.style.display = "none";
+  goalEl.style.display = "none";
+  bubble.appendChild(planEl);
+  bubble.appendChild(progressEl);
+  bubble.appendChild(goalEl);
+  bubble.appendChild(resultEl);
+  wrap.appendChild(bubble);
+  chatEl.appendChild(wrap);
+  updateEmpty();
+  scrollBottom();
+  return { planEl, progressEl, goalEl, resultEl, jobId: null };
+}
+
+/* ---------------------------------------------------------------- 会话历史 */
+
+function sameDay(left, right) {
+  return left.getFullYear() === right.getFullYear()
+    && left.getMonth() === right.getMonth()
+    && left.getDate() === right.getDate();
+}
+
+function renderSessions(list) {
+  sessionsEl.innerHTML = "";
+  if (!list.length) {
+    sessionsEl.appendChild(el("div", "group-label", "暂无历史对话"));
+    return;
+  }
+  const today = new Date();
+  const yesterday = new Date(Date.now() - 86400000);
+  const groups = [["今天", []], ["昨天", []], ["更早", []]];
+  list.forEach((item) => {
+    const date = new Date(item.updated_at * 1000);
+    const index = sameDay(date, today) ? 0 : sameDay(date, yesterday) ? 1 : 2;
+    groups[index][1].push(item);
+  });
+  groups.forEach(([label, items]) => {
+    if (!items.length) return;
+    sessionsEl.appendChild(el("div", "group-label", label));
+    items.forEach((item) => {
+      const button = el("button", "session-item" + (item.id === sessionId ? " active" : ""), item.title);
+      button.type = "button";
+      button.title = item.title;
+      button.addEventListener("click", () => loadSession(item.id));
+      sessionsEl.appendChild(button);
+    });
+  });
+}
+
+async function refreshSessions() {
+  const response = await fetch("/api/sessions");
+  const data = await response.json();
+  sessionsCache = data.sessions || [];
+  renderSessions(sessionsCache);
+}
+
+async function loadSession(id) {
+  if (busy) return;
+  const response = await fetch("/api/sessions/" + encodeURIComponent(id));
+  if (response.status === 404) {
+    startNewChat();
+    return;
+  }
+  const data = await response.json();
+  sessionId = data.id;
+  localStorage.setItem("session_id", sessionId);
+  chatEl.innerHTML = "";
+  data.messages.forEach((turn) => {
+    addUserMessage(turn.query);
+    const ui = addAssistantMessage();
+    renderResult(ui, turn.result);
+  });
+  renderSessions(sessionsCache);
+  updateEmpty();
+  scrollBottom();
+  if (window.innerWidth <= 900) appEl.classList.remove("sidebar-open");
+}
+
+function startNewChat() {
+  sessionId = "";
+  localStorage.removeItem("session_id");
+  chatEl.innerHTML = "";
+  updateEmpty();
+  renderSessions(sessionsCache);
+  if (window.innerWidth <= 900) appEl.classList.remove("sidebar-open");
+  input.focus();
+}
+
+document.getElementById("new-chat").addEventListener("click", () => {
+  if (!busy) startNewChat();
+});
+document.getElementById("collapse-sidebar").addEventListener("click", () => {
+  appEl.classList.remove("sidebar-open");
+});
+document.getElementById("sidebar-toggle").addEventListener("click", () => {
+  appEl.classList.add("sidebar-open");
+});
+
+/* ---------------------------------------------------------------- 提问与轮询 */
+
+form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (busy) return;
+  const query = input.value.trim();
+  if (!query) return;
+  input.value = "";
+  autoGrow();
+  setBusy(true);
+  addUserMessage(query);
+  const ui = addAssistantMessage();
+  ui.progressEl.appendChild(el("div", "progress-line", "正在理解问题..."));
+
+  try {
+    const response = await fetch("/api/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: query, session_id: sessionId }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "请求失败");
+    sessionId = data.session_id;
+    localStorage.setItem("session_id", sessionId);
+    ui.jobId = data.job_id;
+    activeJobId = data.job_id;
+    pollJob(ui, 0);
+  } catch (err) {
+    showError(ui, err.message);
+    setBusy(false);
+  }
+});
+
+async function pollJob(ui, cursor) {
+  try {
+    const response = await fetch("/api/jobs/" + ui.jobId + "?cursor=" + cursor);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "任务已结束");
+    for (const event of data.events) {
+      handleEvent(ui, event);
+    }
+    cursor += data.events.length;
+    if (data.done) {
+      activeJobId = null;
+      setBusy(false);
+      scrollBottom();
+      refreshSessions();
+      return;
+    }
+    setTimeout(() => pollJob(ui, cursor), 800);
+  } catch (err) {
+    showError(ui, err.message);
+    setBusy(false);
+  }
+}
+
+let activeJobId = null;
+
+window.addEventListener("beforeunload", () => {
+  if (activeJobId) navigator.sendBeacon("/api/jobs/" + activeJobId + "/cancel");
+});
+
+function handleEvent(ui, event) {
+  if (event.type === "plan") {
+    ui.planEl.style.display = "block";
+    ui.planEl.textContent = "需求类型：" + event.intents.join("、") +
+      "　执行计划：" + (event.tasks.length ? event.tasks.join(" → ") : "无");
+    if (event.notice) {
+      const notice = el("span", "notice", event.notice);
+      ui.planEl.appendChild(notice);
+    }
+  } else if (event.type === "progress") {
+    ui.progressEl.appendChild(el("div", "progress-line", event.message));
+  } else if (event.type === "goal") {
+    renderGoal(ui, event);
+  } else if (event.type === "result") {
+    renderResult(ui, event);
+  } else if (event.type === "error") {
+    showError(ui, event.message);
+  } else if (event.type === "cancelled") {
+    ui.progressEl.appendChild(el("div", "progress-line", event.message));
+  }
+  scrollBottom();
+}
+
+function renderGoal(ui, event) {
+  const box = ui.goalEl;
+  box.innerHTML = "";
+  box.style.display = "block";
+  box.appendChild(el("div", "goal-title", event.prompt));
+  const options = el("div", "goal-options");
+  event.options.forEach((text, index) => {
+    const button = el("button", "goal-btn" + (index === 0 ? " primary" : ""), (index + 1) + ". " + text);
+    button.type = "button";
+    button.addEventListener("click", () => submitGoal(ui, box, text));
+    options.appendChild(button);
+  });
+  box.appendChild(options);
+
+  const custom = el("div", "goal-custom");
+  const inputEl = document.createElement("input");
+  inputEl.placeholder = "或输入自定义目标";
+  const confirmBtn = el("button", "goal-btn", "确认");
+  confirmBtn.type = "button";
+  confirmBtn.addEventListener("click", () => {
+    const text = inputEl.value.trim();
+    if (text) submitGoal(ui, box, text);
+  });
+  custom.appendChild(inputEl);
+  custom.appendChild(confirmBtn);
+  box.appendChild(custom);
+  scrollBottom();
+}
+
+async function submitGoal(ui, box, answer) {
+  try {
+    const response = await fetch("/api/jobs/" + ui.jobId + "/goal", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ answer: answer }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "提交失败");
+    box.innerHTML = "";
+    box.appendChild(el("div", "goal-done", "分析目标：" + answer));
+  } catch (err) {
+    box.appendChild(el("div", "error", err.message));
+  }
+  scrollBottom();
+}
+
+/* ---------------------------------------------------------------- 结果渲染 */
+
+function buildTable(table) {
+  const wrap = el("div", "table-wrap");
+  const grid = document.createElement("table");
+  const head = document.createElement("tr");
+  table.columns.forEach((name) => head.appendChild(el("th", "", name)));
+  grid.appendChild(head);
+  table.data.forEach((row) => {
+    const tr = document.createElement("tr");
+    row.forEach((value) => {
+      tr.appendChild(el("td", "", value === null || value === undefined ? "" : String(value)));
+    });
+    grid.appendChild(tr);
+  });
+  wrap.appendChild(grid);
+  return wrap;
+}
+
+const REPORT_HEADING = /^##\s*(核心结论|证据|建议|置信度)\s*$/;
+
+function splitReport(text) {
+  const sections = [];
+  let current = null;
+  (text || "").split("\n").forEach((line) => {
+    const match = line.match(REPORT_HEADING);
+    if (match) {
+      current = { title: match[1], lines: [] };
+      sections.push(current);
+      return;
+    }
+    if (current) current.lines.push(line);
+  });
+  return sections
+    .map((section) => ({ title: section.title, body: section.lines.join("\n").trim() }))
+    .filter((section) => section.body);
+}
+
+function renderResult(ui, event) {
+  const box = ui.resultEl;
+  box.innerHTML = "";
+  const sections = splitReport(event.answer);
+  if (sections.length) {
+    const report = el("div", "report");
+    sections.forEach((section) => {
+      const card = el("div", "report-card");
+      card.appendChild(el("div", "report-card-title", section.title));
+      card.appendChild(el("div", "report-card-body", section.body));
+      report.appendChild(card);
+    });
+    box.appendChild(report);
+  } else {
+    box.appendChild(el("div", "answer", event.answer));
+  }
+
+  const meta = el("div", "meta");
+  if (event.confidence !== null && event.confidence !== undefined) {
+    meta.appendChild(el("div", "tag", "核心结论置信度：" + event.confidence + " 分"));
+  }
+  if (event.elapsed) {
+    meta.appendChild(el("div", "tag warn", event.elapsed));
+  }
+  if (meta.childElementCount) box.appendChild(meta);
+
+  if (event.report_name) {
+    const link = el("a", "link", "下载分析报告");
+    link.href = "/api/reports/" + encodeURIComponent(event.report_name);
+    box.appendChild(link);
+  }
+
+  if (event.steps && event.steps.length) {
+    const details = document.createElement("details");
+    details.appendChild(el("summary", "", "查看分析过程"));
+    event.steps.forEach((step) => {
+      const line = "[" + step.step + "]（" + step.elapsed.toFixed(1) + "s）\n" + step.output;
+      details.appendChild(el("pre", "", line));
+    });
+    box.appendChild(details);
+  }
+
+  if (event.sql) {
+    const details = document.createElement("details");
+    details.appendChild(el("summary", "", "查看 SQL 与数据"));
+    details.appendChild(el("pre", "", event.sql));
+    if (event.table && event.table.columns.length) {
+      details.appendChild(buildTable(event.table));
+    }
+    box.appendChild(details);
+  }
+
+  if (event.chart_options && event.chart_options.length) {
+    event.chart_options.forEach((option) => {
+      const holder = el("div", "chart");
+      box.appendChild(holder);
+      const chart = echarts.init(holder);
+      chart.setOption(option);
+      chartInstances.push(chart);
+    });
+  }
+  scrollBottom();
+}
+
+function showError(ui, message) {
+  ui.progressEl.appendChild(el("div", "error", message));
+  scrollBottom();
+}
+
+/* ---------------------------------------------------------------- 输入交互 */
+
+document.querySelectorAll(".chip").forEach((chip) => {
+  chip.addEventListener("click", () => {
+    input.value = chip.dataset.prompt;
+    autoGrow();
+    input.focus();
+  });
+});
+
+input.addEventListener("input", autoGrow);
+input.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+    event.preventDefault();
+    form.requestSubmit();
+  }
+});
+
+window.addEventListener("resize", () => {
+  chartInstances.forEach((chart) => chart.resize());
+});
+
+if (window.innerWidth <= 900) appEl.classList.remove("sidebar-open");
+updateEmpty();
+refreshSessions();
+if (sessionId) loadSession(sessionId);
+</script>
+</body>
+</html>

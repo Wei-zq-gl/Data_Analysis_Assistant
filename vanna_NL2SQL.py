@@ -8,12 +8,7 @@ from openai import OpenAI
 from vanna.chromadb.chromadb_vector import ChromaDB_VectorStore
 from vanna.openai import OpenAI_Chat
 
-DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-DEFAULT_MODEL = "qwen3.8-flash"
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# 向量库持久化目录：chromadb 会在这里生成 chroma.sqlite3 和按集合 UUID 命名的索引子目录
-PERSIST_DIR = os.path.join(BASE_DIR, "chroma_db")
+from config import CHROMA_DIR, DASHSCOPE_BASE_URL, DATA_DB_PATH, DEFAULT_MODEL
 
 
 class MyVanna(ChromaDB_VectorStore, OpenAI_Chat):
@@ -24,7 +19,7 @@ class MyVanna(ChromaDB_VectorStore, OpenAI_Chat):
         OpenAI_Chat.__init__(self, client=client, config=config)
 
 
-def create_agent(db_path, model=DEFAULT_MODEL, persist_dir=PERSIST_DIR):
+def create_agent(db_path, model=DEFAULT_MODEL, persist_dir=CHROMA_DIR):
     """创建 Vanna 实例：LLM 走 DashScope 兼容接口，向量库落到 persist_dir"""
     api_key = os.getenv("DASHSCOPE_API_KEY")
     if not api_key:
@@ -35,6 +30,8 @@ def create_agent(db_path, model=DEFAULT_MODEL, persist_dir=PERSIST_DIR):
         config={
             "path": persist_dir,
             "model": model,
+            # 取数要可复现：同一问题在 Web 与命令行问出的 SQL 必须一致
+            "temperature": 0,
             "n_results_ddl": 30,
             "language": "Chinese",
         },
@@ -44,6 +41,29 @@ def create_agent(db_path, model=DEFAULT_MODEL, persist_dir=PERSIST_DIR):
     return vn
 
 
+class RetrievalError(ValueError):
+    """取数失败，附带已生成的 SQL，上层可带着它重新生成"""
+
+    def __init__(self, message, sql=""):
+        super().__init__(message)
+        self.sql = sql
+
+
+# 生成的 SQL 必须既有起始关键字，又有真正的查询结构；只看开头会把英文说明误当 SQL
+SQL_START = re.compile(r"^(SELECT|WITH)\b", re.I)
+SQL_STRUCTURE = re.compile(
+    r"\b(FROM|JOIN|WHERE|GROUP\s+BY|ORDER\s+BY|HAVING|LIMIT)\b", re.I
+)
+SQL_FENCE = re.compile(r"^```(?:sql|sqlite)?\s*(.*?)```$", re.S | re.I)
+
+
+def _strip_code_fence(sql):
+    """模型偶尔把 SQL 包在 markdown 代码块里，去掉围栏再校验"""
+    text = (sql or "").strip()
+    fenced = SQL_FENCE.match(text)
+    return fenced.group(1).strip() if fenced else text
+
+
 def ask(vn, question):
     """提问 -> 生成 SQL -> 执行，返回 (sql, DataFrame)
 
@@ -51,10 +71,13 @@ def ask(vn, question):
     允许 Vanna 跑一次中间 SQL 并把结果交给模型，再生成最终 SQL。
     模型偶尔会返回说明文本而不是 SQL，这种结果不执行，直接报错。
     """
-    sql = (vn.generate_sql(question=question, allow_llm_to_see_data=True) or "").strip()
-    if not re.match(r"^(SELECT|WITH)\b", sql, re.I):
-        raise ValueError(f"模型没有返回可执行的 SQL：{sql}")
-    return sql, vn.run_sql(sql)
+    sql = _strip_code_fence(vn.generate_sql(question=question, allow_llm_to_see_data=True))
+    if not (SQL_START.match(sql) and SQL_STRUCTURE.search(sql)):
+        raise RetrievalError(f"模型没有返回可执行的 SQL：{sql}", sql=sql)
+    try:
+        return sql, vn.run_sql(sql)
+    except Exception as exc:
+        raise RetrievalError(str(exc), sql=sql) from exc
 
 
 def train_schema(vn):
@@ -183,6 +206,19 @@ EXAMPLE_SQLS = [
     GROUP BY 工号
     ORDER BY 金额回收率 DESC
     """,
+    # 按月份的业绩口径
+    """
+    SELECT
+        strftime('%Y-%m', 日期) AS 月份,
+        工号,
+        SUM(期初金额) AS 总期初金额,
+        SUM(出催金额) AS 回收金额,
+        SUM(出催金额) * 1.0 / SUM(期初金额) AS 金额回收率
+    FROM 结果指标汇总_员工业绩
+    WHERE strftime('%Y', 日期) = '2026'
+    GROUP BY 月份
+    ORDER BY 月份
+    """,
 ]
 
 
@@ -236,9 +272,7 @@ def main():
     if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
         sys.stdout.reconfigure(encoding="utf-8")
 
-    db_path = os.path.join(BASE_DIR, "data.sqlite")
-
-    vn = create_agent(db_path)
+    vn = create_agent(DATA_DB_PATH)
     trained = train_schema(vn)
     if trained:
         print(f"首次运行，已训练 {trained} 条建表语句")
