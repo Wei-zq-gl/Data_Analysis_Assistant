@@ -110,6 +110,18 @@ GOAL_PROMPT = """用户提出了一个员工绩效分析需求，但还没有明
 
 问题：{query}"""
 
+CLARIFY_PROMPT = """你是取数需求澄清器。判断用户的取数问题是否足够具体、能直接生成明确的查询。
+判断维度：统计对象（全体员工/某位员工）、时间粒度（每日/月均/累计汇总）、指标、时间范围。
+本助手只有这些指标：过程数据的触碰率、渗透率、电话码；业绩数据的期初金额、出催金额、回收率、回收金额（即出催金额的回收汇总）。
+判定标准：只有当统计对象、时间粒度或指标本身存在真正的歧义时才算模糊；
+- 仅缺时间范围不算模糊，未指定时间就是查全部数据；
+- 指标是常用说法时不要质疑，例如「回收金额」就是有效的业绩指标。
+- 问题明确时，只输出：{{"options": []}}
+- 确实模糊时，给出 3 个更具体的候选问题，角度不同（如整体与个人、月均与每日），每个候选都是完整可直接执行的取数问题，只能使用上面列出的指标，不要发明其他指标，也不要输出反问句。
+只能输出 JSON，格式：{{"options": ["候选一", "候选二", "候选三"]}}
+{context}
+问题：{query}"""
+
 # 出现这些词说明是追问，需要把上一轮问题带给 NL2SQL
 CONTEXT_HINTS = ("这", "那", "刚才", "上面", "它", "其", "再", "同样", "还是", "还有", "其中")
 
@@ -165,6 +177,22 @@ def follow_up_question(query, history, chart=False):
 def analysis_retrieval_question(question):
     """分析任务的取数问题：在原问题后追加「只要聚合数据」的约束"""
     return f"{question}\n{ANALYSIS_RETRIEVAL_HINT}"
+
+
+# 图表取数问题里出现这些词，视为涉及过程数据
+PROCESS_CHART_WORDS = ("过程", "触碰率", "渗透率", "电话码")
+PROCESS_CHART_HINT = (
+    "该问题涉及过程数据：SQL 需同时输出触碰率、渗透率、电话码三列"
+    "（按统计时间粒度取均值，月度即月均口径），并过滤掉三列同时为空的行。"
+)
+
+
+def chart_retrieval_question(question, query=None):
+    """图表任务的取数问题：涉及过程数据时默认带上全部三个过程指标"""
+    source = f"{query or ''}\n{question}"
+    if any(word in source for word in PROCESS_CHART_WORDS):
+        return f"{question}\n{PROCESS_CHART_HINT}"
+    return question
 
 
 def retry_question(question, error):
@@ -280,6 +308,36 @@ def resolve_goal(answer, options):
     if text:
         return text
     return options[0] if options else ""
+
+
+def clarify_retrieval(llm, query, history=None):
+    """判断取数问题是否模糊：模糊时给出候选口径，明确时返回空列表"""
+    data = _json_from_text(
+        llm(CLARIFY_PROMPT.format(context=format_history(history), query=query))
+    )
+    options = []
+    for option in data.get("options", []):
+        text = str(option).strip()
+        if text and text not in options:
+            options.append(text)
+    return options[:3]
+
+
+def clarify_retrieval_question(llm, question, query, history=None, ask_user=None, notify=print):
+    """取数需求模糊时先让用户确认口径，返回确认后的取数问题
+
+    需求已明确或入口没有确认机制时，直接返回原问题；
+    用户回车默认第一个候选，也可以输入自定义口径。
+    """
+    if ask_user is None:
+        return question
+    options = clarify_retrieval(llm, query, history)
+    if not options:
+        return question
+    notify("取数需求存在多种口径，请确认...")
+    answer = ask_user("这个取数需求不够具体，请选择要哪种口径：", options) or ""
+    choice = resolve_goal(answer, options)
+    return choice or question
 
 
 def extract_confidence(text):
@@ -464,6 +522,13 @@ def _to_percent(value):
     return float((Decimal(str(value)) * 100).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
 
 
+def _int_value(value):
+    """数值四舍五入取整，用于过程图表的电话码展示"""
+    if pd.isna(value):
+        return None
+    return int(Decimal(str(value)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
 def _wrap_category(value):
     """工号在 N020 与后三位之间换行，避免横坐标挤在一起"""
     text = str(value)
@@ -624,13 +689,13 @@ def build_chart_option(df, title="数据分析", columns=None):
             }
             for col in rate_cols
         ]
-        y_axes.append({"type": "value", "name": "电话码", "splitLine": {"show": False}}) 
+        y_axes.append({"type": "value", "name": "电话码", "splitLine": {"show": False}})
         series += [
             {
                 "name": str(col),
                 "type": "line",
                 "yAxisIndex": 1,
-                "data": [_round_value(value) for value in _python_values(df[col])],
+                "data": [_int_value(value) for value in _python_values(df[col])],
                 "label": {"show": True, "position": "top", "fontSize": 9},
                 "labelLayout": {"moveOverlap": "shiftY"},
             }
@@ -732,14 +797,21 @@ def build_assistant(
 
     def retrieve_node(state):
         ensure_active()
-        notify("正在生成并执行 SQL...")
         question = build_question(
             state["query"],
             state.get("history"),
             "chart" in state.get("tasks", []),
         )
+        # 分析任务后面还有目标确认，不做取数澄清，避免连续问两次
         if "analyze" in state.get("tasks", []):
             question = analysis_retrieval_question(question)
+        else:
+            question = clarify_retrieval_question(
+                llm, question, state["query"], state.get("history"), ask_user, notify
+            )
+        if "chart" in state.get("tasks", []):
+            question = chart_retrieval_question(question, state["query"])
+        notify("正在生成并执行 SQL...")
         for attempt in range(MAX_RETRIEVAL_ATTEMPTS):
             try:
                 sql, df = ask_fn(question)

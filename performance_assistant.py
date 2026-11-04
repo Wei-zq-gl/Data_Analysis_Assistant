@@ -140,11 +140,11 @@ def export_chart_png(option, title="数据分析", out_dir=None, renderer=None):
 
 
 def _goal_prompt(prompt, options):
-    """命令行把候选目标编号后拼进提示"""
+    """命令行把候选选项编号后拼进提示，目标确认与取数澄清共用"""
     option_lines = "\n".join(f"{index}. {text}" for index, text in enumerate(options, 1))
     return (
         f"{prompt}\n参考选项：\n{option_lines}\n"
-        "请输入序号或自定义目标，直接回车默认第 1 个："
+        "请输入序号，或直接输入内容，直接回车默认第 1 个："
     )
 
 

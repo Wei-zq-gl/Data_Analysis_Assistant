@@ -163,6 +163,14 @@ td:first-child, th:first-child { text-align: left; }
 }
 #send:hover:not(:disabled) { background: #dfe5ff; }
 #send:disabled { background: #f2f3f7; color: #b6bbc4; cursor: not-allowed; }
+#stop {
+  flex: 0 0 auto; width: 36px; height: 36px;
+  display: none; align-items: center; justify-content: center;
+  border: none; border-radius: 50%;
+  background: #ffecec; color: #e0564f; cursor: pointer;
+}
+#stop:hover:not(:disabled) { background: #ffdcdc; }
+#stop:disabled { background: #f2f3f7; color: #b6bbc4; cursor: not-allowed; }
 
 @media (max-width: 900px) {
   .sidebar {
@@ -233,6 +241,9 @@ td:first-child, th:first-child { text-align: left; }
                 图表
               </button>
             </div>
+            <button id="stop" type="button" aria-label="停止">
+              <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg>
+            </button>
             <button id="send" type="submit" aria-label="发送">
               <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
@@ -251,6 +262,7 @@ const sessionsEl = document.getElementById("sessions");
 const form = document.getElementById("ask-form");
 const input = document.getElementById("query");
 const sendBtn = document.getElementById("send");
+const stopBtn = document.getElementById("stop");
 const chartInstances = [];
 
 let sessionsCache = [];
@@ -283,6 +295,8 @@ function autoGrow() {
 function setBusy(value) {
   busy = value;
   sendBtn.disabled = value;
+  stopBtn.style.display = value ? "inline-flex" : "none";
+  stopBtn.disabled = false;
 }
 
 function addUserMessage(text) {
@@ -456,6 +470,22 @@ async function pollJob(ui, cursor) {
 
 let activeJobId = null;
 
+stopBtn.addEventListener("click", async () => {
+  if (!activeJobId) return;
+  stopBtn.disabled = true;
+  try {
+    await fetch("/api/jobs/" + activeJobId + "/cancel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+      keepalive: true,
+    });
+  } catch (err) {
+    // 取消请求失败不中断轮询，任务照常跑完
+    stopBtn.disabled = false;
+  }
+});
+
 window.addEventListener("beforeunload", () => {
   if (activeJobId) navigator.sendBeacon("/api/jobs/" + activeJobId + "/cancel");
 });
@@ -478,6 +508,8 @@ function handleEvent(ui, event) {
   } else if (event.type === "error") {
     showError(ui, event.message);
   } else if (event.type === "cancelled") {
+    ui.goalEl.style.display = "none";
+    ui.goalEl.innerHTML = "";
     ui.progressEl.appendChild(el("div", "progress-line", event.message));
   }
   scrollBottom();
@@ -499,7 +531,7 @@ function renderGoal(ui, event) {
 
   const custom = el("div", "goal-custom");
   const inputEl = document.createElement("input");
-  inputEl.placeholder = "或输入自定义目标";
+  inputEl.placeholder = "或输入自定义内容";
   const confirmBtn = el("button", "goal-btn", "确认");
   confirmBtn.type = "button";
   confirmBtn.addEventListener("click", () => {
@@ -522,7 +554,7 @@ async function submitGoal(ui, box, answer) {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "提交失败");
     box.innerHTML = "";
-    box.appendChild(el("div", "goal-done", "分析目标：" + answer));
+    box.appendChild(el("div", "goal-done", "已确认：" + answer));
   } catch (err) {
     box.appendChild(el("div", "error", err.message));
   }

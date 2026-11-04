@@ -21,5 +21,5 @@ DEFAULT_MODEL = "qwen3.7-flash"
 # Web 服务
 WEB_HOST = "127.0.0.1"
 WEB_PORT = 5000
-# 分析流程会阻塞等待用户在页面上确认分析目标，超时则终止本次任务
+# 流程会阻塞等待用户在页面上确认（分析目标或取数口径），超时则终止本次任务
 GOAL_WAIT_SECONDS = 600

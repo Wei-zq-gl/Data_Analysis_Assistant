@@ -111,7 +111,7 @@ python performance_assistant_web.py
 | `GET /api/sessions/<session_id>` | 会话问答明细 |
 | `GET /api/reports/<name>` | 下载分析报告 |
 
-## 执行流程
+## 当前执行流程
 
 `assistant_core.py` 用 LangGraph 组装执行图，命令行与 Web 入口共用：
 
@@ -129,6 +129,60 @@ START → classify ──┬─→ retrieve → finalize
 - `finalize`：按优先级汇总最终回答（错误提示 > 分析报告 > 图表路径 > 数据行数）。
 
 入口只保留界面相关差异：命令行负责命令行 I/O 与 PNG 导出，Web 版负责 Flask 路由、后台任务与会话存储。图表默认取「期初金额 + 回收率」，金额与比率量级差距大时使用右侧第二根 Y 轴并以折线展示；横轴为日期时自动改用折线图；用户说「分别 / 分开 / 多张」或一句话里出现多个「图」时，每个指标拆成独立图表。
+
+## 后续架构设计：工具调用与观察回灌（未实施）
+
+当前代码仍按上一节的固定图执行。计划把编排层改为「模型决策 + 工具执行 + 观察回灌」循环；`build_assistant` 仍是入口共用的接缝，取数、八步分析、图表生成的领域实现保持不变。
+
+### 调用协议
+
+模型每轮只输出一个 JSON，二选一：
+
+```json
+{"thought": "需要先取各员工回收金额", "action": {"tool": "retrieve", "args": {"question": "各员工回收金额排名", "purpose": "query"}}}
+```
+
+```json
+{"thought": "数据已足够，可以直接回答", "final": "各员工回收金额排名如下……"}
+```
+
+- `action` 与 `final` 只能出现一个。
+- `tool` 必须是已注册工具，`args` 必须是对象并通过必填参数、未知参数校验。
+- 校验失败不中断任务，而是生成错误观察回灌，由模型下一轮修正。
+
+### 工具清单
+
+| 工具 | 参数 | 依赖 | 产出 |
+| --- | --- | --- | --- |
+| `retrieve` | `question`、`purpose`（`query` / `analysis` / `chart`） | `ask_fn`、`question_fn`、对话历史 | `sql`、`df` |
+| `analyze` | 无 | 已有 `df`、`ask_user`、`report_dir` | 报告、报告路径、置信度、分析步骤 |
+| `chart` | 无 | 已有 `df`、`chart_exporter` | echarts 配置、图表标题、PNG 路径 |
+
+`retrieve` 保留现有入口差异：命令行按图表口径改写问题，Web 版保持用户原话；`purpose` 为 `analysis` 时追加聚合约束。`analyze` 与 `chart` 在没有数据时返回「先调用 retrieve」的错误观察，不再由前置规划保证顺序。
+
+### 观察回灌
+
+- `Observation` 分两部分：`summary` 回灌给模型，单条截断到 800 字；`payload` 只写入 `artifacts`，供界面和后续工具使用，不进入提示词。
+- 每步按「工具、参数、成功或失败、摘要」追加到 `scratchpad`，下一轮完整渲染。
+- 工具异常转成错误观察，不向上抛出；用户取消仍通过 `TaskCancelled` 向上传播。
+- 最大步数 6；相同工具与参数连续出现 2 次时不再执行，直接回灌错误观察。
+- 取数失败不在工具内部重试，由模型根据错误观察决定是否改写问题后重试。
+
+### 执行图
+
+```text
+START -> agent
+agent --有 action--> execute -> agent
+agent --有 final 或达到步数上限--> finalize -> END
+```
+
+`agent` 负责解析协议，`execute` 负责执行工具并合并 `artifacts`，`finalize` 使用模型的 `final`；达到步数上限仍无 `final` 时，按已有 SQL、报告、图表汇总并明确提示步数用尽。Web 版原有的取消检查保留在各节点执行前。
+
+### 预期影响
+
+- 输出：分析报告质量基本不变，因为 `analyze` 仍复用八步流程；异常恢复和多意图调度小幅改善；最终回答改由模型撰写，稳定性略降。
+- 调用：一般比现在多 1 到 2 次模型调用。分析场景感知耗时约增加 10%，简单取数与图表场景约增加 30% 到 60%。
+- 以上为按当前调用结构估算，尚未用真实问题做改造前后基准对比。
 
 ## 数据与指标口径
 

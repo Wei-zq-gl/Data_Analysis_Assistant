@@ -2,6 +2,7 @@
 
 import os
 import re
+import sqlite3
 import sys
 
 from openai import OpenAI
@@ -19,6 +20,29 @@ class MyVanna(ChromaDB_VectorStore, OpenAI_Chat):
         OpenAI_Chat.__init__(self, client=client, config=config)
 
 
+# 常用过滤与关联列的索引：日期列支持范围查询，工号列支持分组与两表关联
+INDEX_STATEMENTS = [
+    "CREATE INDEX IF NOT EXISTS idx_过程_日期 ON 过程数据_员工过程(日期)",
+    "CREATE INDEX IF NOT EXISTS idx_过程_工号 ON 过程数据_员工过程(工号)",
+    "CREATE INDEX IF NOT EXISTS idx_业绩_日期 ON 结果指标汇总_员工业绩(日期)",
+    "CREATE INDEX IF NOT EXISTS idx_业绩_工号 ON 结果指标汇总_员工业绩(工号)",
+]
+
+
+def ensure_indexes(db_path):
+    """给常用过滤与关联列建索引，已存在则跳过
+
+    DDL 没有结果集，vanna 的 run_sql 处理不了，改用 sqlite3 直接执行。
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        for statement in INDEX_STATEMENTS:
+            conn.execute(statement)
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def create_agent(db_path, model=DEFAULT_MODEL, persist_dir=CHROMA_DIR):
     """创建 Vanna 实例：LLM 走 DashScope 兼容接口，向量库落到 persist_dir"""
     api_key = os.getenv("DASHSCOPE_API_KEY")
@@ -32,12 +56,14 @@ def create_agent(db_path, model=DEFAULT_MODEL, persist_dir=CHROMA_DIR):
             "model": model,
             # 取数要可复现：同一问题在 Web 与命令行问出的 SQL 必须一致
             "temperature": 0,
-            "n_results_ddl": 30,
+            # 库里只有两张表，检索 5 条 DDL 足够，减少提示词长度
+            "n_results_ddl": 5,
             "language": "Chinese",
         },
         client=client,
     )
     vn.connect_to_sqlite(db_path)
+    ensure_indexes(db_path)
     return vn
 
 
@@ -67,11 +93,11 @@ def _strip_code_fence(sql):
 def ask(vn, question):
     """提问 -> 生成 SQL -> 执行，返回 (sql, DataFrame)
 
-    allow_llm_to_see_data=True：遇到需要先探查字符串取值的问题时，
-    允许 Vanna 跑一次中间 SQL 并把结果交给模型，再生成最终 SQL。
+    allow_llm_to_see_data=False：业务文档和示例 SQL 已覆盖字段取值模式，
+    不需要再跑中间 SQL 探查数据，避免一次提问触发多次模型调用。
     模型偶尔会返回说明文本而不是 SQL，这种结果不执行，直接报错。
     """
-    sql = _strip_code_fence(vn.generate_sql(question=question, allow_llm_to_see_data=True))
+    sql = _strip_code_fence(vn.generate_sql(question=question, allow_llm_to_see_data=False))
     if not (SQL_START.match(sql) and SQL_STRUCTURE.search(sql)):
         raise RetrievalError(f"模型没有返回可执行的 SQL：{sql}", sql=sql)
     try:
@@ -86,7 +112,10 @@ def train_schema(vn):
     if existing is not None and not existing.empty:
         return 0
 
-    rows = vn.run_sql("SELECT type, sql FROM sqlite_master WHERE sql IS NOT NULL")
+    # 只训练建表语句：索引 DDL 进提示词没有意义，还占 token
+    rows = vn.run_sql(
+        "SELECT type, sql FROM sqlite_master WHERE type = 'table' AND sql IS NOT NULL"
+    )
     ddls = rows["sql"].dropna().tolist()
     for ddl in ddls:
         vn.train(ddl=ddl)
@@ -162,10 +191,23 @@ EXAMPLE_SQLS = [
     WHERE p.触碰率 IS NOT NULL OR p.渗透率 IS NOT NULL OR p.电话码 IS NOT NULL
     GROUP BY p.工号
     """,
+    # 指定月份的个人过程数据：按工号查询某个月的月均值，例如「2026年9月个人的过程数据」
+    """
+    SELECT
+        工号,
+        SUM(触碰率) * 1.0 / COUNT(CASE WHEN 触碰率 > 0 THEN 1 END) AS 平均触碰率,
+        SUM(渗透率) * 1.0 / COUNT(CASE WHEN 渗透率 > 0 THEN 1 END) AS 平均渗透率,
+        SUM(电话码) * 1.0 / COUNT(CASE WHEN 电话码 > 0 THEN 1 END) AS 平均电话码
+    FROM 过程数据_员工过程
+    WHERE 日期 >= '2026-09-01' AND 日期 < '2026-10-01'
+      AND (触碰率 IS NOT NULL OR 渗透率 IS NOT NULL OR 电话码 IS NOT NULL)
+    GROUP BY 工号
+    ORDER BY 工号
+    """,
     # 按月份的趋势分析（月均值 = 当月累加 / 当月大于 0 且非空的行数）
     """
     SELECT
-        strftime('%Y-%m', 日期) AS 月份,
+        substr(日期, 1, 7) AS 月份,
         SUM(触碰率) * 1.0 / COUNT(CASE WHEN 触碰率 > 0 THEN 1 END) AS 平均触碰率,
         SUM(渗透率) * 1.0 / COUNT(CASE WHEN 渗透率 > 0 THEN 1 END) AS 平均渗透率,
         SUM(电话码) * 1.0 / COUNT(CASE WHEN 电话码 > 0 THEN 1 END) AS 平均电话码
@@ -209,13 +251,13 @@ EXAMPLE_SQLS = [
     # 按月份的业绩口径
     """
     SELECT
-        strftime('%Y-%m', 日期) AS 月份,
+        substr(日期, 1, 7) AS 月份,
         工号,
         SUM(期初金额) AS 总期初金额,
         SUM(出催金额) AS 回收金额,
         SUM(出催金额) * 1.0 / SUM(期初金额) AS 金额回收率
     FROM 结果指标汇总_员工业绩
-    WHERE strftime('%Y', 日期) = '2026'
+    WHERE 日期 >= '2026-01-01' AND 日期 < '2027-01-01'
     GROUP BY 月份
     ORDER BY 月份
     """,

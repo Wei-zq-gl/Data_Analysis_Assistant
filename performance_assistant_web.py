@@ -202,8 +202,9 @@ def result_payload(result):
 class AssistantJob:
     """一次提问对应的后台任务
 
-    事件按顺序入队，前端按游标轮询拉取。分析流程中途要用户确认分析目标，
-    ask_user 会阻塞任务线程，直到前端通过 submit_goal 提交答案或等待超时。
+    事件按顺序入队，前端按游标轮询拉取。流程中途要用户确认信息
+    （分析目标或取数口径），ask_user 会阻塞任务线程，直到前端通过
+    submit_goal 提交答案或等待超时。
     """
 
     def __init__(self, session_id, query, store):
@@ -219,7 +220,7 @@ class AssistantJob:
         self.cancelled = threading.Event()
 
     def cancel(self):
-        """标记取消，并唤醒正在等用户确认分析目标的任务线程"""
+        """标记取消，并唤醒正在等用户确认的任务线程"""
         self.cancelled.set()
         self.goal_event.set()
 
@@ -241,7 +242,7 @@ class AssistantJob:
         self.goal_event.clear()
         self.push("goal", prompt=prompt, options=options)
         if not self.goal_event.wait(GOAL_WAIT_SECONDS):
-            raise TimeoutError("等待确认分析目标超时，任务已终止")
+            raise TimeoutError("等待确认超时，任务已终止")
         self._ensure_active()
         return self.goal_answer
 
